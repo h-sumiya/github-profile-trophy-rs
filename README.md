@@ -41,7 +41,6 @@ Access examples:
 http://localhost:8080/?username=h-sumiya
 http://localhost:8080/?username=h-sumiya&theme=onedark&column=6
 http://localhost:8080/                         # Only available when using a single token
-
 ```
 
 ## Building a Single Binary

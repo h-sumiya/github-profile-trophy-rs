@@ -29,6 +29,7 @@ use moka::future::Cache;
 use params::ParsedParams;
 use svg::Card;
 use themes::resolve_theme;
+use tower_http::cors::{Any, CorsLayer};
 use tracing::{error, info, warn};
 
 #[derive(Clone)]
@@ -113,6 +114,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route("/", get(index_handler))
         .route("/healthz", get(health_handler))
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        )
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, port)).await?;
