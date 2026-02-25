@@ -34,6 +34,7 @@ use tracing::{error, info, warn};
 #[derive(Clone)]
 struct AppState {
     github: Arc<GithubClient>,
+    default_username: Option<String>,
     user_cache: Cache<String, Arc<models::UserInfo>>,
     svg_cache: Cache<String, Bytes>,
 }
@@ -75,7 +76,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
+    let single_token_mode = tokens.len() == 1;
     let github = Arc::new(GithubClient::new(github_api, tokens)?);
+    let default_username = if single_token_mode {
+        match github.request_authenticated_username().await {
+            Ok(username) => {
+                info!("single token mode enabled for username='{username}'");
+                Some(username)
+            }
+            Err(err) => {
+                warn!("failed to resolve username from single token: {err}");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     let user_cache = Cache::builder()
         .max_capacity(20_000)
@@ -89,6 +105,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let state = AppState {
         github,
+        default_username,
         user_cache,
         svg_cache,
     };
@@ -115,13 +132,17 @@ async fn index_handler(
 ) -> Response {
     let params = ParsedParams::from_raw(raw_query.as_deref());
 
-    let username = match params.get_optional_string("username") {
+    let username = match resolve_username(
+        params.get_optional_string("username"),
+        state.default_username.as_deref(),
+    ) {
         Some(value) => value,
         None => {
             let body = html::missing_username_page(uri.path());
             return html_response(StatusCode::BAD_REQUEST, body);
         }
     };
+    let include_private = should_include_private(state.default_username.as_deref(), &username);
 
     let row = params.get_number_value("row", DEFAULT_MAX_ROW).max(1);
     let mut column = params.get_number_value("column", DEFAULT_MAX_COLUMN);
@@ -144,11 +165,15 @@ async fn index_handler(
         return svg_response(svg);
     }
 
-    let user_key_cache = format!("v1-{username}");
+    let user_key_cache = format!("v2-{username}-private={include_private}");
     let user_info = if let Some(cached) = state.user_cache.get(&user_key_cache).await {
         cached
     } else {
-        match state.github.request_user_info(&username).await {
+        match state
+            .github
+            .request_user_info(&username, include_private)
+            .await
+        {
             Ok(user_info) => {
                 let user_info = Arc::new(user_info);
                 state
@@ -193,6 +218,19 @@ async fn health_handler() -> impl IntoResponse {
 fn cache_key(path: &str, raw_query: Option<&str>) -> String {
     let query = raw_query.unwrap_or_default();
     format!("v1:{path}?{query}")
+}
+
+fn resolve_username(
+    requested_username: Option<String>,
+    default_username: Option<&str>,
+) -> Option<String> {
+    requested_username.or_else(|| default_username.map(str::to_string))
+}
+
+fn should_include_private(default_username: Option<&str>, requested_username: &str) -> bool {
+    default_username
+        .map(|username| username.eq_ignore_ascii_case(requested_username))
+        .unwrap_or(false)
 }
 
 fn cache_control_header() -> String {
@@ -262,5 +300,38 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c => {},
         _ = terminate => {},
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{resolve_username, should_include_private};
+
+    #[test]
+    fn resolve_username_prefers_request_param() {
+        let resolved = resolve_username(Some("requested".to_string()), Some("default"));
+        assert_eq!(resolved, Some("requested".to_string()));
+    }
+
+    #[test]
+    fn resolve_username_falls_back_to_default() {
+        let resolved = resolve_username(None, Some("default"));
+        assert_eq!(resolved, Some("default".to_string()));
+    }
+
+    #[test]
+    fn resolve_username_missing_both_returns_none() {
+        let resolved = resolve_username(None, None);
+        assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn should_include_private_when_usernames_match() {
+        assert!(should_include_private(Some("Alice"), "alice"));
+    }
+
+    #[test]
+    fn should_not_include_private_when_usernames_differ() {
+        assert!(!should_include_private(Some("alice"), "bob"));
     }
 }

@@ -11,6 +11,8 @@
 - インメモリ TTL キャッシュ
   - ユーザー情報: 4時間
   - 生成 SVG: 1時間
+- 単一トークン時は起動時に `viewer.login` を解決して `username` 省略を許可
+- 単一トークンの所有者へリクエストした場合は private リポジトリを含めて集計
 - 既存クエリ互換: `username`, `title`, `rank`, `row`, `column`, `theme`, `margin-w`, `margin-h`, `no-bg`, `no-frame`
 
 ## 必要環境
@@ -37,6 +39,7 @@ cargo run --release
 ```text
 http://localhost:8080/?username=h-sumiya
 http://localhost:8080/?username=h-sumiya&theme=onedark&column=6
+http://localhost:8080/                         # 単一トークン時のみ利用可能
 ```
 
 ## 単一バイナリ作成

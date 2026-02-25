@@ -30,6 +30,25 @@ query userInfo($username: String!) {
 }
 "#;
 
+const QUERY_VIEWER_ACTIVITY: &str = r#"
+query viewerInfo {
+  user: viewer {
+    createdAt
+    contributionsCollection {
+      totalCommitContributions
+      restrictedContributionsCount
+      totalPullRequestReviewContributions
+    }
+    organizations(first: 1) {
+      totalCount
+    }
+    followers(first: 1) {
+      totalCount
+    }
+  }
+}
+"#;
+
 const QUERY_USER_ISSUE: &str = r#"
 query userInfo($username: String!) {
   user(login: $username) {
@@ -43,9 +62,32 @@ query userInfo($username: String!) {
 }
 "#;
 
+const QUERY_VIEWER_ISSUE: &str = r#"
+query viewerInfo {
+  user: viewer {
+    openIssues: issues(states: OPEN) {
+      totalCount
+    }
+    closedIssues: issues(states: CLOSED) {
+      totalCount
+    }
+  }
+}
+"#;
+
 const QUERY_USER_PULL_REQUEST: &str = r#"
 query userInfo($username: String!) {
   user(login: $username) {
+    pullRequests(first: 1) {
+      totalCount
+    }
+  }
+}
+"#;
+
+const QUERY_VIEWER_PULL_REQUEST: &str = r#"
+query viewerInfo {
+  user: viewer {
     pullRequests(first: 1) {
       totalCount
     }
@@ -70,6 +112,35 @@ query userInfo($username: String!) {
         createdAt
       }
     }
+  }
+}
+"#;
+
+const QUERY_VIEWER_REPOSITORY: &str = r#"
+query viewerInfo {
+  user: viewer {
+    repositories(first: 50, ownerAffiliations: OWNER, orderBy: {direction: DESC, field: STARGAZERS}) {
+      totalCount
+      nodes {
+        languages(first: 3, orderBy: {direction: DESC, field: SIZE}) {
+          nodes {
+            name
+          }
+        }
+        stargazers {
+          totalCount
+        }
+        createdAt
+      }
+    }
+  }
+}
+"#;
+
+const QUERY_VIEWER_LOGIN: &str = r#"
+query viewerLogin {
+  user: viewer {
+    login
   }
 }
 "#;
@@ -106,11 +177,20 @@ impl GithubClient {
         })
     }
 
-    pub async fn request_user_info(&self, username: &str) -> Result<UserInfo, ServiceError> {
-        let repository = self.request_user_repository(username);
-        let activity = self.request_user_activity(username);
-        let issue = self.request_user_issue(username);
-        let pull_request = self.request_user_pull_request(username);
+    pub async fn request_authenticated_username(&self) -> Result<String, ServiceError> {
+        let viewer: ViewerLogin = self.execute_viewer_query(QUERY_VIEWER_LOGIN).await?;
+        Ok(viewer.login)
+    }
+
+    pub async fn request_user_info(
+        &self,
+        username: &str,
+        include_private: bool,
+    ) -> Result<UserInfo, ServiceError> {
+        let repository = self.request_user_repository(username, include_private);
+        let activity = self.request_user_activity(username, include_private);
+        let issue = self.request_user_issue(username, include_private);
+        let pull_request = self.request_user_pull_request(username, include_private);
 
         let (repository, activity, issue, pull_request) =
             try_join!(repository, activity, issue, pull_request)?;
@@ -126,29 +206,54 @@ impl GithubClient {
     pub async fn request_user_repository(
         &self,
         username: &str,
+        include_private: bool,
     ) -> Result<UserRepository, ServiceError> {
-        self.execute_query(QUERY_USER_REPOSITORY, username).await
+        if include_private {
+            self.execute_viewer_query(QUERY_VIEWER_REPOSITORY).await
+        } else {
+            self.execute_user_query(QUERY_USER_REPOSITORY, username)
+                .await
+        }
     }
 
     pub async fn request_user_activity(
         &self,
         username: &str,
+        include_private: bool,
     ) -> Result<UserActivity, ServiceError> {
-        self.execute_query(QUERY_USER_ACTIVITY, username).await
+        if include_private {
+            self.execute_viewer_query(QUERY_VIEWER_ACTIVITY).await
+        } else {
+            self.execute_user_query(QUERY_USER_ACTIVITY, username).await
+        }
     }
 
-    pub async fn request_user_issue(&self, username: &str) -> Result<UserIssue, ServiceError> {
-        self.execute_query(QUERY_USER_ISSUE, username).await
+    pub async fn request_user_issue(
+        &self,
+        username: &str,
+        include_private: bool,
+    ) -> Result<UserIssue, ServiceError> {
+        if include_private {
+            self.execute_viewer_query(QUERY_VIEWER_ISSUE).await
+        } else {
+            self.execute_user_query(QUERY_USER_ISSUE, username).await
+        }
     }
 
     pub async fn request_user_pull_request(
         &self,
         username: &str,
+        include_private: bool,
     ) -> Result<UserPullRequest, ServiceError> {
-        self.execute_query(QUERY_USER_PULL_REQUEST, username).await
+        if include_private {
+            self.execute_viewer_query(QUERY_VIEWER_PULL_REQUEST).await
+        } else {
+            self.execute_user_query(QUERY_USER_PULL_REQUEST, username)
+                .await
+        }
     }
 
-    async fn execute_query<T: DeserializeOwned>(
+    async fn execute_user_query<T: DeserializeOwned>(
         &self,
         query: &str,
         username: &str,
@@ -160,6 +265,24 @@ impl GithubClient {
             }
         });
 
+        self.execute_payload(&payload).await
+    }
+
+    async fn execute_viewer_query<T: DeserializeOwned>(
+        &self,
+        query: &str,
+    ) -> Result<T, ServiceError> {
+        let payload = json!({
+            "query": query,
+        });
+
+        self.execute_payload(&payload).await
+    }
+
+    async fn execute_payload<T: DeserializeOwned>(
+        &self,
+        payload: &serde_json::Value,
+    ) -> Result<T, ServiceError> {
         let attempts = self.tokens.len().max(1);
         let mut last_error = ServiceError::NotFound;
 
@@ -170,7 +293,7 @@ impl GithubClient {
                 .map(String::as_str)
                 .unwrap_or_default();
 
-            match self.execute_query_once::<T>(&payload, token).await {
+            match self.execute_query_once::<T>(payload, token).await {
                 Ok(response) => return Ok(response),
                 Err(err) => {
                     last_error = err;
@@ -235,6 +358,11 @@ struct GraphqlError {
     r#type: String,
     #[serde(default)]
     message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ViewerLogin {
+    login: String,
 }
 
 impl<T> GraphqlResponse<T> {
