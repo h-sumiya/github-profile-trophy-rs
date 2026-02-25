@@ -1,62 +1,66 @@
 # github-profile-trophy-rs
 
-`github-profile-trophy` の Rust 移植版です。  
-`axum` ベース、非 Docker、単一バイナリで動作します。
+A Rust port of [`github-profile-trophy`](https://github.com/ryo-ma/github-profile-trophy).  
+It runs as a standalone single binary without Docker, based on `axum`.
 
-## 特徴
+## Features
 
-- `axum` + `tokio` による高スループット HTTP サーバー
-- GitHub GraphQL 4クエリを並列実行
-- `reqwest` 接続プール再利用
-- インメモリ TTL キャッシュ
-  - ユーザー情報: 4時間
-  - 生成 SVG: 1時間
-- 単一トークン時は起動時に `viewer.login` を解決して `username` 省略を許可
-- 単一トークンの所有者へリクエストした場合は private リポジトリを含めて集計
-- 既存クエリ互換: `username`, `title`, `rank`, `row`, `column`, `theme`, `margin-w`, `margin-h`, `no-bg`, `no-frame`
+- High-throughput HTTP server using `axum` + `tokio`
+- Parallel execution of 4 GitHub GraphQL queries
+- Reuses `reqwest` connection pools
+- In-memory TTL cache
+  - User information: 4 hours
+  - Generated SVG: 1 hour
+- When using a single token, it resolves `viewer.login` at startup, allowing you to omit the `username` parameter
+- Includes private repositories in the aggregation when requesting data for the single token's owner
+- Compatible with existing query parameters: `username`, `title`, `rank`, `row`, `column`, `theme`, `margin-w`, `margin-h`, `no-bg`, `no-frame`
 
-## 必要環境
+## Requirements
 
 - Rust (stable)
-- GitHub Personal Access Token (GraphQL 利用のため推奨)
+- GitHub Personal Access Token (recommended to use the GraphQL API)
 
-## 環境変数
+## Environment Variables
 
 - `PORT` (default: `8080`)
 - `GITHUB_API` (default: `https://api.github.com/graphql`)
 - `GITHUB_TOKEN1`
 - `GITHUB_TOKEN2`
-- `GITHUB_TOKEN` (`GITHUB_TOKEN1/2` の代替として1つだけ使いたい場合)
+- `GITHUB_TOKEN` (Use this if you only want to provide a single token as an alternative to `GITHUB_TOKEN1/2`)
 
-## 実行
+## Usage
 
 ```bash
 cargo run --release
+
 ```
 
-アクセス例:
+Access examples:
 
 ```text
 http://localhost:8080/?username=h-sumiya
 http://localhost:8080/?username=h-sumiya&theme=onedark&column=6
-http://localhost:8080/                         # 単一トークン時のみ利用可能
+http://localhost:8080/                         # Only available when using a single token
+
 ```
 
-## 単一バイナリ作成
+## Building a Single Binary
 
 ```bash
 cargo build --release
+
 ```
 
-出力:
+Output:
 
 ```text
 ./target/release/github-profile-trophy-rs
+
 ```
 
-このバイナリ単体で実行できます。
+You can run this standalone binary directly.
 
-## 実装上の差分
+## Implementation Differences
 
-- Redis / Docker 依存は排除（非 Docker 運用向け）
-- サーバー内キャッシュはインメモリ実装に変更
+- Removed dependencies on Redis / Docker (targeted for non-Docker environments)
+- Server-side caching is replaced with an in-memory implementation
