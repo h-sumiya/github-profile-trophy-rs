@@ -1,0 +1,10 @@
+[tasks.run]
+run = "cargo run --release"
+
+[env]
+PORT = 8080
+GITHUB_API = "https://api.github.com/graphql"
+GITHUB_TOKEN1 = "set your token here"
+GITHUB_TOKEN2 = "set your token here"
+# Optional single token fallback
+GITHUB_TOKEN = "set your token here"
